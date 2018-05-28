@@ -1,1 +1,1 @@
-go-ois
+# Go wrapper for the Olympus Image Share Web API
