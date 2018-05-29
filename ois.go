@@ -18,7 +18,7 @@ import (
 //Olympus .
 type Olympus struct {
 	client     *gorequest.SuperAgent
-	cameraMode int8
+	cameraMode int
 	live       bool
 }
 
@@ -38,12 +38,14 @@ const (
 	_shutdown       = "/exec_pwoff.cgi"
 	_listImages     = "/get_imglist.cgi"
 	_getThumbnail   = "/get_thumbnail.cgi"
+	_getResized     = "/get_resizeimg.cgi"
 	_connectionMode = "/get_connectmode.cgi"
 	_switchMode     = "/switch_cammode.cgi"
 	_doMisc         = "/exec_takemisc.cgi"
 	_doMotion       = "/exec_takemotion.cgi"
 	_doShutter      = "/exec_shutter.cgi"
 	_setProperty    = "/set_camprop.cgi" //POST
+	_cameraInfo     = "/get_caminfo.cgi"
 
 	//Modes
 	_shutter = iota
@@ -67,7 +69,7 @@ func New() *Olympus {
 	ol.client = gorequest.New()
 
 	//set debug
-	if _debug {
+	if false && _debug {
 		ol.client.SetDebug(true)
 	}
 
@@ -105,8 +107,24 @@ func (ol *Olympus) Connect() *Olympus {
 	return ol
 }
 
+//Info gets the camera information i.e Camera name
+func (ol *Olympus) Info(info *string) *Olympus {
+	res, body, errors := ol.client.Get(_domain + _cameraInfo).
+		End()
+	catchHTTPError("", res, errors)
+
+	//log
+	logger(body)
+
+	return ol
+}
+
 //Mode sets the camera mode
 func (ol *Olympus) Mode(mode int) *Olympus {
+	if ol.cameraMode == mode {
+		return ol
+	}
+
 	//set flag
 	modeString := ""
 
@@ -116,6 +134,11 @@ func (ol *Olympus) Mode(mode int) *Olympus {
 	case _shutter:
 		modeString = "shutter"
 	case _liveview: //special case -> i know it sucks to do it this way :d hahaha
+		//<param2 name="0320x0240"/>
+		//<param2 name="0640x0480"/>
+		//<param2 name="0800x0600"/>
+		//<param2 name="1024x0768"/>
+		//<param2 name="1280x0960"/>
 		modeString = "rec&lvqty=0640x0480"
 	default:
 	}
@@ -124,6 +147,9 @@ func (ol *Olympus) Mode(mode int) *Olympus {
 		Query("mode=" + modeString).
 		End()
 	catchHTTPError("", res, errors)
+
+	//set mode
+	ol.cameraMode = mode
 
 	return ol
 }
@@ -139,6 +165,9 @@ func (ol *Olympus) Shutdown() *Olympus {
 
 //List returns list of all images in default directory
 func (ol *Olympus) List() *Olympus {
+	//change mode to play
+	ol.Mode(_play)
+
 	res, body, errors := ol.client.Get(_domain + _listImages).
 		Query("DIR=" + _imagePath).
 		End()
@@ -166,7 +195,31 @@ func (ol *Olympus) List() *Olympus {
 
 //Image retrieves an image by name
 func (ol *Olympus) Image(filename string) *Olympus {
-	res, body, errors := ol.client.Get(_domain + _imagePath).
+	//change mode to play
+	ol.Mode(_play)
+
+	res, body, errors := ol.client.Get(_domain + _imagePath + "/" + filename).
+		End()
+	catchHTTPError("", res, errors)
+
+	makeImage(filename, body)
+
+	return ol
+}
+
+//Resize returns a resized image
+func (ol *Olympus) Resize(filename, size string) *Olympus {
+	//change mode to play
+	ol.Mode(_liveview)
+
+	//size
+	//<param2 name="1024"/>
+	//<param2 name="1600"/>
+	//<param2 name="1920"/>
+	//<param2 name="2048"/>
+
+	res, body, errors := ol.client.Get(_domain + _getResized).
+		Query("DIR=" + _imagePath + "/" + filename + "&size=" + size).
 		End()
 	catchHTTPError("", res, errors)
 
@@ -177,6 +230,9 @@ func (ol *Olympus) Image(filename string) *Olympus {
 
 //Thumbnail retrieves thumbnail version of an image
 func (ol *Olympus) Thumbnail(filename string) *Olympus {
+	//change mode to play
+	ol.Mode(_play)
+
 	res, body, errors := ol.client.Get(_domain + _getThumbnail).
 		Query("DIR=" + _imagePath + "/" + filename).
 		End()
@@ -189,10 +245,12 @@ func (ol *Olympus) Thumbnail(filename string) *Olympus {
 
 //AutoFocus sets the  auto-focus point
 func (ol *Olympus) AutoFocus(x, y int) *Olympus {
-	dimen := ""
+
+	//set to rec/liveview mode first
+	ol.Mode(_liveview)
 
 	xx, yy := fmt.Sprintf("%04d", x), fmt.Sprintf("%04d", y)
-	dimen = xx + "x" + yy
+	dimen := xx + "x" + yy
 
 	//log
 	logger(dimen)
@@ -210,12 +268,13 @@ func (ol *Olympus) AutoFocus(x, y int) *Olympus {
 
 //Take takes a photo
 func (ol *Olympus) Take(out *string) *Olympus {
-	filename := "temp.jpg"
+	//switch to rec or shutter mode
+
+	filename := "last.jpg"
 
 	//check mode
 	switch ol.cameraMode {
 	case _shutter:
-		//_doShutter
 		//3. GET /exec_shutter.cgi?com=1st2ndpush HTTP/1.1
 		res, _, errors := ol.client.Get(_domain + _doShutter).
 			Query("com=1st2ndpush").
@@ -228,18 +287,31 @@ func (ol *Olympus) Take(out *string) *Olympus {
 			End()
 		catchHTTPError("", res, errors)
 
+		//switch to rec mode first
+		ol.Mode(_liveview)
+
 		//GET /exec_takemisc.cgi?com=getlastjpg
-		//get last image
+		res, body, errors := ol.client.Get(_domain + _doMisc).
+			Query("com=getlastjpg").
+			End()
+		catchHTTPError("", res, errors)
+
+		//create the image
+		makeImage(filename, body)
+
+		//update filename of last image
+		*out = filename
+
 	case _liveview:
-		//_doMotion
 		//5. GET /exec_takemotion.cgi?com=starttake HTTP/1.1
 		res, _, errors := ol.client.Get(_domain + _doMotion).
 			Query("com=starttake").
 			End()
 		catchHTTPError("", res, errors)
 
-		//_doMisc
-		//get last image
+		//switch to rec mode first
+		ol.Mode(_liveview)
+
 		//GET /exec_takemisc.cgi?com=getlastjpg
 		//6. GET /exec_takemisc.cgi?com=getrecview HTTP/1.1
 		res, body, errors := ol.client.Get(_domain + _doMisc).
@@ -247,19 +319,26 @@ func (ol *Olympus) Take(out *string) *Olympus {
 			End()
 		catchHTTPError("", res, errors)
 
+		//create the image
 		makeImage(filename, body)
+
+		//update filename of last image
+		*out = filename
 	case _play:
+		ol.Mode(_shutter)
+
+		//call again
+		ol.Take(out)
 	default:
 	}
-
-	//update filename of last image
-	*out = filename
 
 	return ol
 }
 
 //LiveView starts and ends a liveview
 func (ol *Olympus) LiveView(filename string) *Olympus {
+	//switch to rec mode
+
 	//check live view status
 	if !ol.live { //Start
 		//HTTP request start liveview
