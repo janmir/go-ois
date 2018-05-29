@@ -19,6 +19,7 @@ import (
 type Olympus struct {
 	client     *gorequest.SuperAgent
 	cameraMode int8
+	live       bool
 }
 
 const (
@@ -39,8 +40,9 @@ const (
 	_getThumbnail   = "/get_thumbnail.cgi"
 	_connectionMode = "/get_connectmode.cgi"
 	_switchMode     = "/switch_cammode.cgi"
-	_doMiscActions  = "/exec_takemisc.cgi"
+	_doMisc         = "/exec_takemisc.cgi"
 	_doMotion       = "/exec_takemotion.cgi"
+	_doShutter      = "/exec_shutter.cgi"
 	_setProperty    = "/set_camprop.cgi" //POST
 
 	//Modes
@@ -50,6 +52,7 @@ const (
 
 	//Misc
 	_pollingInterval = 5000 //ms
+	_udpPort         = 28488
 )
 
 var (
@@ -103,11 +106,25 @@ func (ol *Olympus) Connect() *Olympus {
 }
 
 //Mode sets the camera mode
-func (ol *Olympus) Mode() *Olympus {
+func (ol *Olympus) Mode(mode int) *Olympus {
 	//set flag
-	//shutter
-	//play
-	//liveview
+	modeString := ""
+
+	switch mode {
+	case _play:
+		modeString = "play"
+	case _shutter:
+		modeString = "shutter"
+	case _liveview: //special case -> i know it sucks to do it this way :d hahaha
+		modeString = "rec&lvqty=0640x0480"
+	default:
+	}
+
+	res, _, errors := ol.client.Get(_domain + _switchMode).
+		Query("mode=" + modeString).
+		End()
+	catchHTTPError("", res, errors)
+
 	return ol
 }
 
@@ -193,31 +210,76 @@ func (ol *Olympus) AutoFocus(x, y int) *Olympus {
 
 //Take takes a photo
 func (ol *Olympus) Take(out *string) *Olympus {
+	filename := "temp.jpg"
+
 	//check mode
 	switch ol.cameraMode {
 	case _shutter:
-		{
+		//_doShutter
+		//3. GET /exec_shutter.cgi?com=1st2ndpush HTTP/1.1
+		res, _, errors := ol.client.Get(_domain + _doShutter).
+			Query("com=1st2ndpush").
+			End()
+		catchHTTPError("", res, errors)
 
-			//GET /exec_shutter.cgi?com=1st2ndpush HTTP/1.1
-			//GET /exec_shutter.cgi?com=2nd1strelease HTTP/1.1
+		//4. GET /exec_shutter.cgi?com=2nd1strelease HTTP/1.1
+		res, _, errors = ol.client.Get(_domain + _doShutter).
+			Query("com=2nd1strelease").
+			End()
+		catchHTTPError("", res, errors)
 
-		}
+		//GET /exec_takemisc.cgi?com=getlastjpg
+		//get last image
 	case _liveview:
-		{
-			// > GET /switch_cammode.cgi?mode=shutter HTTP/1.1
-			// > GET /exec_takemotion.cgi?com=starttake HTTP/1.1
-			// > get last taken image
-			// > GET /exec_takemisc.cgi?com=getrecview HTTP/1.1
-		}
+		//_doMotion
+		//5. GET /exec_takemotion.cgi?com=starttake HTTP/1.1
+		res, _, errors := ol.client.Get(_domain + _doMotion).
+			Query("com=starttake").
+			End()
+		catchHTTPError("", res, errors)
+
+		//_doMisc
+		//get last image
+		//GET /exec_takemisc.cgi?com=getlastjpg
+		//6. GET /exec_takemisc.cgi?com=getrecview HTTP/1.1
+		res, body, errors := ol.client.Get(_domain + _doMisc).
+			Query("com=getrecview").
+			End()
+		catchHTTPError("", res, errors)
+
+		makeImage(filename, body)
 	case _play:
 	default:
 	}
-	//play
-	//shutter
-	//liveview
 
 	//update filename of last image
-	*out = ""
+	*out = filename
+
+	return ol
+}
+
+//LiveView starts and ends a liveview
+func (ol *Olympus) LiveView(filename string) *Olympus {
+	//check live view status
+	if !ol.live { //Start
+		//HTTP request start liveview
+		//1. GET /switch_cammode.cgi?mode=play HTTP/1.1
+		//2. GET /switch_cammode.cgi?mode=rec&lvqty=0640x0480 HTTP/1.1
+		//3. GET /exec_takemisc.cgi?com=startliveview&port=28488 HTTP/1.1
+
+		//UDP connection
+		//handle udp in goroutine via channel
+		//populate channel
+		//save to cache (3 elements)
+		//send first-in to client
+		//draw in canvas client
+	} else { //Stop
+		//4. GET /exec_takemisc.cgi?com=stopliveview HTTP/1.1
+		res, _, errors := ol.client.Get(_domain + _doMisc).
+			Query("com=stopliveview").
+			End()
+		catchHTTPError("", res, errors)
+	}
 
 	return ol
 }
