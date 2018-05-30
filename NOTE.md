@@ -6,7 +6,10 @@
 - ffmpeg pipes 
     - https://ffmpeg.org/ffmpeg-protocols.html#pipe
     - https://stackoverflow.com/questions/49798803/creating-an-image-from-a-video-frame
-                  
+- mjpeg
+    - https://github.com/c0va23/go-mjpeg_simple_server
+- image to byte
+    - https://stackoverflow.com/questions/39577318/encoding-an-image-to-jpeg-in-go?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
 
 # liveview
 1. GET /switch_cammode.cgi?mode=play HTTP/1.1
