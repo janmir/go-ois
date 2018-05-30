@@ -2,12 +2,16 @@ package ois
 
 import (
 	"testing"
-	"time"
 )
+
+func TestLiveView(t *testing.T) {
+	o := New()
+	o.LiveViewStart()
+}
 
 func TestConnect(t *testing.T) {
 	o := New()
-	time.Sleep(time.Second * 60)
+	//time.Sleep(time.Second * 60)
 	o.Connect()
 }
 

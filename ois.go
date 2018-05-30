@@ -4,11 +4,14 @@ package ois
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,6 +62,27 @@ const (
 
 var (
 	ticker *time.Ticker
+
+	//Resize size resize values
+	Resize = struct {
+		r1024, r1600, r1920, r2048 string
+	}{
+		r1024: "1024",
+		r1600: "1600",
+		r1920: "1920",
+		r2048: "2048",
+	}
+
+	//Quality rec quality level
+	Quality = struct {
+		q320, q640, q800, q1024, q1280 string
+	}{
+		q320:  "0320x0240",
+		q640:  "0640x0480",
+		q800:  "0800x0600",
+		q1024: "1024x0768",
+		q1280: "1280x0960",
+	}
 )
 
 //New creates a new instance of OIS
@@ -76,13 +100,9 @@ func New() *Olympus {
 	//poll camera to check connection
 	ticker = time.NewTicker(time.Millisecond * _pollingInterval)
 	go func() {
-		for t := range ticker.C {
-			logger("Tick")
-			logger(t)
-
+		for range ticker.C {
 			//call the connection checker
 			ol.Connect()
-			logger("Tock...")
 		}
 	}()
 	//ticker.Stop()
@@ -120,10 +140,12 @@ func (ol *Olympus) Info(info *string) *Olympus {
 }
 
 //Mode sets the camera mode
-func (ol *Olympus) Mode(mode int) *Olympus {
+func (ol *Olympus) Mode(mode int, quality string) *Olympus {
 	if ol.cameraMode == mode {
 		return ol
 	}
+
+	q1, q2 := "", ""
 
 	//set flag
 	modeString := ""
@@ -133,18 +155,17 @@ func (ol *Olympus) Mode(mode int) *Olympus {
 		modeString = "play"
 	case _shutter:
 		modeString = "shutter"
-	case _liveview: //special case -> i know it sucks to do it this way :d hahaha
-		//<param2 name="0320x0240"/>
-		//<param2 name="0640x0480"/>
-		//<param2 name="0800x0600"/>
-		//<param2 name="1024x0768"/>
-		//<param2 name="1280x0960"/>
-		modeString = "rec&lvqty=0640x0480"
+	case _liveview:
+		modeString = "rec"
+		q2 = "lvqty=" + quality
 	default:
 	}
 
+	q1 = "mode=" + modeString
+
 	res, _, errors := ol.client.Get(_domain + _switchMode).
-		Query("mode=" + modeString).
+		Query(q1).
+		Query(q2).
 		End()
 	catchHTTPError("", res, errors)
 
@@ -166,7 +187,7 @@ func (ol *Olympus) Shutdown() *Olympus {
 //List returns list of all images in default directory
 func (ol *Olympus) List() *Olympus {
 	//change mode to play
-	ol.Mode(_play)
+	ol.Mode(_play, "")
 
 	res, body, errors := ol.client.Get(_domain + _listImages).
 		Query("DIR=" + _imagePath).
@@ -196,7 +217,7 @@ func (ol *Olympus) List() *Olympus {
 //Image retrieves an image by name
 func (ol *Olympus) Image(filename string) *Olympus {
 	//change mode to play
-	ol.Mode(_play)
+	ol.Mode(_play, "")
 
 	res, body, errors := ol.client.Get(_domain + _imagePath + "/" + filename).
 		End()
@@ -210,13 +231,7 @@ func (ol *Olympus) Image(filename string) *Olympus {
 //Resize returns a resized image
 func (ol *Olympus) Resize(filename, size string) *Olympus {
 	//change mode to play
-	ol.Mode(_liveview)
-
-	//size
-	//<param2 name="1024"/>
-	//<param2 name="1600"/>
-	//<param2 name="1920"/>
-	//<param2 name="2048"/>
+	ol.Mode(_liveview, Quality.q640)
 
 	res, body, errors := ol.client.Get(_domain + _getResized).
 		Query("DIR=" + _imagePath + "/" + filename + "&size=" + size).
@@ -231,7 +246,7 @@ func (ol *Olympus) Resize(filename, size string) *Olympus {
 //Thumbnail retrieves thumbnail version of an image
 func (ol *Olympus) Thumbnail(filename string) *Olympus {
 	//change mode to play
-	ol.Mode(_play)
+	ol.Mode(_play, "")
 
 	res, body, errors := ol.client.Get(_domain + _getThumbnail).
 		Query("DIR=" + _imagePath + "/" + filename).
@@ -247,7 +262,7 @@ func (ol *Olympus) Thumbnail(filename string) *Olympus {
 func (ol *Olympus) AutoFocus(x, y int) *Olympus {
 
 	//set to rec/liveview mode first
-	ol.Mode(_liveview)
+	ol.Mode(_liveview, Quality.q640)
 
 	xx, yy := fmt.Sprintf("%04d", x), fmt.Sprintf("%04d", y)
 	dimen := xx + "x" + yy
@@ -288,7 +303,7 @@ func (ol *Olympus) Take(out *string) *Olympus {
 		catchHTTPError("", res, errors)
 
 		//switch to rec mode first
-		ol.Mode(_liveview)
+		ol.Mode(_liveview, Quality.q640)
 
 		//GET /exec_takemisc.cgi?com=getlastjpg
 		res, body, errors := ol.client.Get(_domain + _doMisc).
@@ -310,7 +325,7 @@ func (ol *Olympus) Take(out *string) *Olympus {
 		catchHTTPError("", res, errors)
 
 		//switch to rec mode first
-		ol.Mode(_liveview)
+		ol.Mode(_liveview, Quality.q640)
 
 		//GET /exec_takemisc.cgi?com=getlastjpg
 		//6. GET /exec_takemisc.cgi?com=getrecview HTTP/1.1
@@ -325,7 +340,7 @@ func (ol *Olympus) Take(out *string) *Olympus {
 		//update filename of last image
 		*out = filename
 	case _play:
-		ol.Mode(_shutter)
+		ol.Mode(_shutter, "")
 
 		//call again
 		ol.Take(out)
@@ -335,30 +350,86 @@ func (ol *Olympus) Take(out *string) *Olympus {
 	return ol
 }
 
-//LiveView starts and ends a liveview
-func (ol *Olympus) LiveView(filename string) *Olympus {
-	//switch to rec mode
+//LiveViewStart starts and ends a liveview
+func (ol *Olympus) LiveViewStart() *Olympus {
+
+	//1. GET /switch_cammode.cgi?mode=play HTTP/1.1
+	//2. GET /switch_cammode.cgi?mode=rec&lvqty=0640x0480 HTTP/1.1
+	ol.Mode(_liveview, Quality.q640)
 
 	//check live view status
-	if !ol.live { //Start
-		//HTTP request start liveview
-		//1. GET /switch_cammode.cgi?mode=play HTTP/1.1
-		//2. GET /switch_cammode.cgi?mode=rec&lvqty=0640x0480 HTTP/1.1
-		//3. GET /exec_takemisc.cgi?com=startliveview&port=28488 HTTP/1.1
+	//HTTP request start liveview
+	//3. GET /exec_takemisc.cgi?com=startliveview&port=28488 HTTP/1.1
+	res, _, errors := ol.client.Get(_domain + _doMisc).
+		Query("com=startliveview").
+		Query("port=" + strconv.Itoa(_udpPort)).
+		End()
+	catchHTTPError("", res, errors)
 
-		//UDP connection
-		//handle udp in goroutine via channel
-		//populate channel
-		//save to cache (3 elements)
-		//send first-in to client
-		//draw in canvas client
-	} else { //Stop
-		//4. GET /exec_takemisc.cgi?com=stopliveview HTTP/1.1
-		res, _, errors := ol.client.Get(_domain + _doMisc).
-			Query("com=stopliveview").
-			End()
-		catchHTTPError("", res, errors)
+	logger("requested!")
+
+	//UDP connection
+	addr := net.UDPAddr{
+		Port: _udpPort,
+		IP:   net.ParseIP(_domain),
 	}
+	conn, err := net.ListenUDP("udp", &addr)
+	catch(err)
+	defer conn.Close()
+	defer ol.LiveViewStop()
+
+	logger("connected!")
+
+	buf := make([]byte, 1472)
+	for {
+		rlen, _, err := conn.ReadFromUDP(buf)
+		catch(err)
+
+		switch buf[0] {
+		case 0x90: //start
+			logger("@first:", rlen)
+			//data = Soi -> end
+			//find Soi
+			if index := indexSOI(buf); index >= 0 {
+				jpg := buf[index:]
+				fmt.Printf("%x", jpg)
+			}
+		case 0x80:
+			if buf[1] == 0x60 { //mid
+				logger("@mid:", rlen)
+				//data = 12 -> end
+				//Cut from 12 to end
+				jpg := buf[12:]
+				fmt.Printf("%x", jpg)
+			} else { //end
+				logger("@end:", rlen)
+				//data = 12 -> eoi | end
+				//find eoi
+				if index := indexEOI(buf); index >= 0 {
+					jpg := buf[12:min(len(buf), index)]
+					fmt.Printf("%x", jpg)
+				}
+			}
+		default:
+		}
+	}
+
+	//handle udp in goroutine via channel
+	//populate channel
+	//save to cache (3 elements)
+	//send first-in to client
+	//draw in canvas client
+
+	return ol
+}
+
+//LiveViewStop stops and ends a liveview
+func (ol *Olympus) LiveViewStop() *Olympus {
+	//4. GET /exec_takemisc.cgi?com=stopliveview HTTP/1.1
+	res, _, errors := ol.client.Get(_domain + _doMisc).
+		Query("com=stopliveview").
+		End()
+	catchHTTPError("", res, errors)
 
 	return ol
 }
@@ -396,26 +467,49 @@ func makeImage(filaname, data string) {
 	catch(err)
 }
 
-func logger(arg interface{}) {
+func logger(arg ...interface{}) {
 	if _debug {
-		log.Println(arg)
+		log.Println(arg...)
 	}
 }
 
-//Snips
-//udp -> https://stackoverflow.com/questions/27176523/udp-in-golang-listen-not-a-blocking-call?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
-//gstreamer -> https://schneide.blog/2015/03/03/streaming-images-from-your-application-to-the-web-with-gstreamer-and-icecast-part-1/
-//liveview
-//1. GET /switch_cammode.cgi?mode=play HTTP/1.1
-//2. GET /switch_cammode.cgi?mode=rec&lvqty=0640x0480 HTTP/1.1
-//3. GET /exec_takemisc.cgi?com=startliveview&port=28488 HTTP/1.1
-//4. GET /exec_takemisc.cgi?com=stopliveview HTTP/1.1
-// -> shoot
-//5. GET /exec_takemotion.cgi?com=starttake HTTP/1.1
-//6. GET /exec_takemisc.cgi?com=getrecview HTTP/1.1
-//Shutter mode
-//1. GET /switch_cammode.cgi?mode=play HTTP/1.1
-//2. GET /switch_cammode.cgi?mode=shutter HTTP/1.1
-// -> shoot
-//3. GET /exec_shutter.cgi?com=1st2ndpush HTTP/1.1
-//4. GET /exec_shutter.cgi?com=2nd1strelease HTTP/1.1
+func indexSOI(buf []byte) int {
+	//fmt.Printf("%x", buf)
+	soi := []byte{0xff, 0xd8}
+
+	//remove first 12
+	buf = buf[12:]
+
+	fmt.Printf("%x", buf)
+
+	//find ff d8
+	if l := bytes.Split(buf, soi); len(l) == 2 {
+		return len(l[0])
+	}
+
+	return -1
+}
+
+func indexEOI(buf []byte) int {
+	//fmt.Printf("%x", buf)
+	eoi := []byte{0xff, 0xd9}
+
+	//remove first 12
+	buf = buf[12:]
+
+	fmt.Printf("%x", buf)
+
+	//find ff d8
+	if l := bytes.Split(buf, eoi); len(l) == 2 {
+		return len(l[0]) + len(eoi)
+	}
+
+	return -1
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
