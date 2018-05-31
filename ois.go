@@ -87,6 +87,11 @@ var (
 	udpConnection *net.UDPConn
 )
 
+//Image defines images in list
+type Image struct {
+	directory, filename, size, attribute, data, time string
+}
+
 //New creates a new instance of OIS
 func New() *Olympus {
 	ol := &Olympus{}
@@ -95,10 +100,21 @@ func New() *Olympus {
 	ol.client = gorequest.New()
 
 	//set debug
-	if false && _debug {
+	if _debug {
 		ol.client.SetDebug(true)
 	}
 
+	return ol
+}
+
+/*
+ * ┌──────────────────────────────────┐
+ * │        Olympus Functions         │
+ * └──────────────────────────────────┘
+ */
+
+//Tick starts long polling to maintain connection
+func (ol *Olympus) Tick() *Olympus {
 	//poll camera to check connection
 	ticker = time.NewTicker(time.Millisecond * _pollingInterval)
 	go func() {
@@ -107,30 +123,27 @@ func New() *Olympus {
 			ol.Connect()
 		}
 	}()
+
 	//ticker.Stop()
 
 	return ol
 }
 
-//Image defines images in list
-type Image struct {
-	directory, filename, size, attribute, data, time string
-}
-
 //Connect gets the camera connection mode
 func (ol *Olympus) Connect() *Olympus {
 	if !ol.live {
-		res, _, errors := ol.client.Get(_domain + _connectionMode).
+		path := _domain + _connectionMode
+		res, _, errors := ol.client.Get(path).
 			End()
 
 		if len(errors) > 0 {
 			for _, e := range errors {
-				log.Println("Warn:", e)
+				logger("Warn:", e)
 			}
 		}
 
 		if res.StatusCode != http.StatusOK {
-			log.Println("Warn:", res.StatusCode)
+			logger("Warn:", res.StatusCode)
 		}
 	}
 
@@ -156,10 +169,7 @@ func (ol *Olympus) Mode(mode int, quality string) *Olympus {
 		return ol
 	}
 
-	q1, q2 := "", ""
-
-	//set flag
-	modeString := ""
+	q1, q2, modeString := "", "", ""
 
 	switch mode {
 	case _play:
@@ -474,7 +484,11 @@ func (ol *Olympus) LiveViewStop() *Olympus {
 	return ol
 }
 
-//Utilities
+/*
+ * ┌──────────────────────────────────┐
+ * │        Utility Functions         │
+ * └──────────────────────────────────┘
+ */
 func catch(err error) {
 	if err != nil {
 		log.Fatal("Error:", err)
