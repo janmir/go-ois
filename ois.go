@@ -281,7 +281,10 @@ func (ol *Olympus) Thumbnail(filename string) *Olympus {
 	err := catchHTTPError("", res, errors)
 	catch(err)
 
-	makeImage("th_"+filename, body)
+	//update filename
+	filename = "thumb_" + strings.Split(filename, ".")[0] + ".jpg"
+
+	makeImage(filename, body)
 
 	return ol
 }
@@ -314,7 +317,7 @@ func (ol *Olympus) AutoFocus(x, y int) *Olympus {
 func (ol *Olympus) Take(out *string) *Olympus {
 	//switch to rec or shutter mode
 
-	filename := "last.jpg"
+	filename := "lastJPG.jpg"
 
 	//check mode
 	switch ol.cameraMode {
