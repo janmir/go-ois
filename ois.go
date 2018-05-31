@@ -122,10 +122,16 @@ func (ol *Olympus) Connect() *Olympus {
 	if !ol.live {
 		res, _, errors := ol.client.Get(_domain + _connectionMode).
 			End()
-		catchHTTPError("", res, errors)
 
-		//log
-		//logger(body)
+		if len(errors) > 0 {
+			for _, e := range errors {
+				log.Println("Warn:", e)
+			}
+		}
+
+		if res.StatusCode != http.StatusOK {
+			log.Println("Warn:", res.StatusCode)
+		}
 	}
 
 	return ol
@@ -135,7 +141,8 @@ func (ol *Olympus) Connect() *Olympus {
 func (ol *Olympus) Info(info *string) *Olympus {
 	res, body, errors := ol.client.Get(_domain + _cameraInfo).
 		End()
-	catchHTTPError("", res, errors)
+	err := catchHTTPError("", res, errors)
+	catch(err)
 
 	//log
 	logger(body)
@@ -171,7 +178,8 @@ func (ol *Olympus) Mode(mode int, quality string) *Olympus {
 		Query(q1).
 		Query(q2).
 		End()
-	catchHTTPError("", res, errors)
+	err := catchHTTPError("", res, errors)
+	catch(err)
 
 	//set mode
 	ol.cameraMode = mode
@@ -183,7 +191,8 @@ func (ol *Olympus) Mode(mode int, quality string) *Olympus {
 func (ol *Olympus) Shutdown() *Olympus {
 	res, _, errors := ol.client.Get(_domain + _shutdown).
 		End()
-	catchHTTPError("", res, errors)
+	err := catchHTTPError("", res, errors)
+	catch(err)
 
 	return ol
 }
@@ -196,7 +205,8 @@ func (ol *Olympus) List() *Olympus {
 	res, body, errors := ol.client.Get(_domain + _listImages).
 		Query("DIR=" + _imagePath).
 		End()
-	catchHTTPError("", res, errors)
+	err := catchHTTPError("", res, errors)
+	catch(err)
 
 	//directory | filename | size | attribute | date | time
 	scanner := bufio.NewScanner(strings.NewReader(body))
@@ -209,7 +219,8 @@ func (ol *Olympus) List() *Olympus {
 		vals := strings.Split(txt, ",")
 
 		if len(vals) == 6 {
-			images = append(images, Image{vals[0], vals[1], vals[2], vals[3], vals[4], vals[5]})
+			images = append(images, Image{vals[0], vals[1],
+				vals[2], vals[3], vals[4], vals[5]})
 		}
 	}
 
@@ -225,7 +236,8 @@ func (ol *Olympus) Image(filename string) *Olympus {
 
 	res, body, errors := ol.client.Get(_domain + _imagePath + "/" + filename).
 		End()
-	catchHTTPError("", res, errors)
+	err := catchHTTPError("", res, errors)
+	catch(err)
 
 	makeImage(filename, body)
 
@@ -240,7 +252,8 @@ func (ol *Olympus) Resize(filename, size string) *Olympus {
 	res, body, errors := ol.client.Get(_domain + _getResized).
 		Query("DIR=" + _imagePath + "/" + filename + "&size=" + size).
 		End()
-	catchHTTPError("", res, errors)
+	err := catchHTTPError("", res, errors)
+	catch(err)
 
 	makeImage(filename, body)
 
@@ -255,7 +268,8 @@ func (ol *Olympus) Thumbnail(filename string) *Olympus {
 	res, body, errors := ol.client.Get(_domain + _getThumbnail).
 		Query("DIR=" + _imagePath + "/" + filename).
 		End()
-	catchHTTPError("", res, errors)
+	err := catchHTTPError("", res, errors)
+	catch(err)
 
 	makeImage("th_"+filename, body)
 
@@ -277,7 +291,8 @@ func (ol *Olympus) AutoFocus(x, y int) *Olympus {
 	res, body, errors := ol.client.Get(_domain + _doMotion).
 		Query("com=assignafframe&point=" + dimen).
 		End()
-	catchHTTPError("", res, errors)
+	err := catchHTTPError("", res, errors)
+	catch(err)
 
 	//log
 	logger(body)
@@ -298,13 +313,15 @@ func (ol *Olympus) Take(out *string) *Olympus {
 		res, _, errors := ol.client.Get(_domain + _doShutter).
 			Query("com=1st2ndpush").
 			End()
-		catchHTTPError("", res, errors)
+		err := catchHTTPError("", res, errors)
+		catch(err)
 
 		//4. GET /exec_shutter.cgi?com=2nd1strelease HTTP/1.1
 		res, _, errors = ol.client.Get(_domain + _doShutter).
 			Query("com=2nd1strelease").
 			End()
-		catchHTTPError("", res, errors)
+		err = catchHTTPError("", res, errors)
+		catch(err)
 
 		//switch to rec mode first
 		ol.Mode(_liveview, Quality.q640)
@@ -313,7 +330,8 @@ func (ol *Olympus) Take(out *string) *Olympus {
 		res, body, errors := ol.client.Get(_domain + _doMisc).
 			Query("com=getlastjpg").
 			End()
-		catchHTTPError("", res, errors)
+		err = catchHTTPError("", res, errors)
+		catch(err)
 
 		//create the image
 		makeImage(filename, body)
@@ -326,7 +344,8 @@ func (ol *Olympus) Take(out *string) *Olympus {
 		res, _, errors := ol.client.Get(_domain + _doMotion).
 			Query("com=starttake").
 			End()
-		catchHTTPError("", res, errors)
+		err := catchHTTPError("", res, errors)
+		catch(err)
 
 		//switch to rec mode first
 		ol.Mode(_liveview, Quality.q640)
@@ -336,7 +355,8 @@ func (ol *Olympus) Take(out *string) *Olympus {
 		res, body, errors := ol.client.Get(_domain + _doMisc).
 			Query("com=getrecview").
 			End()
-		catchHTTPError("", res, errors)
+		err = catchHTTPError("", res, errors)
+		catch(err)
 
 		//create the image
 		makeImage(filename, body)
@@ -372,7 +392,8 @@ func (ol *Olympus) LiveViewStart(channel chan []byte) *Olympus {
 		Query("com=startliveview").
 		Query("port=" + strconv.Itoa(_udpPort)).
 		End()
-	catchHTTPError("", res, errs)
+	err := catchHTTPError("", res, errs)
+	catch(err)
 
 	ol.live = true
 
@@ -444,7 +465,8 @@ func (ol *Olympus) LiveViewStop() *Olympus {
 		res, _, errors := ol.client.Get(_domain + _doMisc).
 			Query("com=stopliveview").
 			End()
-		catchHTTPError("", res, errors)
+		err := catchHTTPError("", res, errors)
+		catch(err)
 
 		//close udp
 		udpConnection.Close()
@@ -455,7 +477,7 @@ func (ol *Olympus) LiveViewStop() *Olympus {
 //Utilities
 func catch(err error) {
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Error:", err)
 	}
 }
 
