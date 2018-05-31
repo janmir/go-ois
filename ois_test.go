@@ -44,6 +44,17 @@ func TestList(t *testing.T) {
 	o.List()
 }
 
+func TestTake(t *testing.T) {
+	o := New()
+
+	o.Mode(_shutter, "")
+
+	filename := ""
+	o.Take(&filename)
+
+	logger(filename, "created.")
+}
+
 func TestGetImage(t *testing.T) {
 	o := New()
 	o.Image("P5100027.JPG")
