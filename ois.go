@@ -63,8 +63,8 @@ const (
 var (
 	ticker *time.Ticker
 
-	//Resize size resize values
-	Resize = struct {
+	//Res size resize values
+	Res = struct {
 		r1024, r1600, r1920, r2048 string
 	}{
 		r1024: "1024",
@@ -83,6 +83,8 @@ var (
 		q1024: "1024x0768",
 		q1280: "1280x0960",
 	}
+
+	udpConnection *net.UDPConn
 )
 
 //New creates a new instance of OIS
@@ -117,12 +119,14 @@ type Image struct {
 
 //Connect gets the camera connection mode
 func (ol *Olympus) Connect() *Olympus {
-	res, body, errors := ol.client.Get(_domain + _connectionMode).
-		End()
-	catchHTTPError("", res, errors)
+	if !ol.live {
+		res, _, errors := ol.client.Get(_domain + _connectionMode).
+			End()
+		catchHTTPError("", res, errors)
 
-	//log
-	logger(body)
+		//log
+		//logger(body)
+	}
 
 	return ol
 }
@@ -351,91 +355,104 @@ func (ol *Olympus) Take(out *string) *Olympus {
 }
 
 //LiveViewStart starts and ends a liveview
-func (ol *Olympus) LiveViewStart() *Olympus {
+func (ol *Olympus) LiveViewStart(channel chan []byte) *Olympus {
+
+	if ol.live {
+		return ol
+	}
 
 	//1. GET /switch_cammode.cgi?mode=play HTTP/1.1
+	ol.Mode(_play, "")
+
 	//2. GET /switch_cammode.cgi?mode=rec&lvqty=0640x0480 HTTP/1.1
 	ol.Mode(_liveview, Quality.q640)
 
-	//check live view status
-	//HTTP request start liveview
 	//3. GET /exec_takemisc.cgi?com=startliveview&port=28488 HTTP/1.1
-	res, _, errors := ol.client.Get(_domain + _doMisc).
+	res, _, errs := ol.client.Get(_domain + _doMisc).
 		Query("com=startliveview").
 		Query("port=" + strconv.Itoa(_udpPort)).
 		End()
-	catchHTTPError("", res, errors)
+	catchHTTPError("", res, errs)
 
-	logger("requested!")
+	ol.live = true
 
-	//UDP connection
-	addr := net.UDPAddr{
-		Port: _udpPort,
-		IP:   net.ParseIP(_domain),
-	}
-	conn, err := net.ListenUDP("udp", &addr)
-	catch(err)
-	defer conn.Close()
-	defer ol.LiveViewStop()
+	go func(channel chan []byte) {
+		logger("Starting UDP Connection...")
 
-	logger("connected!")
+		var (
+			rlen int
+			err  error
+		)
 
-	buf := make([]byte, 1472)
-	for {
-		rlen, _, err := conn.ReadFromUDP(buf)
+		//UDP connection
+		addr := net.UDPAddr{
+			Port: _udpPort,
+			IP:   net.ParseIP(_domain),
+		}
+
+		udpConnection, err = net.ListenUDP("udp", &addr)
 		catch(err)
+		defer ol.LiveViewStop()
 
-		switch buf[0] {
-		case 0x90: //start
-			logger("@first:", rlen)
-			//data = Soi -> end
-			//find Soi
-			if index := indexSOI(buf); index >= 0 {
-				jpg := buf[index:]
-				fmt.Printf("%x", jpg)
+		buf := make([]byte, 4000)
+		jpg := make([]byte, 0)
+
+		for ol.live {
+			rlen, _, err = udpConnection.ReadFromUDP(buf)
+			catch(err)
+
+			if rlen <= 0 {
+				catch(errors.New("no data in udp"))
 			}
-		case 0x80:
-			if buf[1] == 0x60 { //mid
-				logger("@mid:", rlen)
-				//data = 12 -> end
-				//Cut from 12 to end
-				jpg := buf[12:]
-				fmt.Printf("%x", jpg)
-			} else { //end
-				logger("@end:", rlen)
-				//data = 12 -> eoi | end
-				//find eoi
-				if index := indexEOI(buf); index >= 0 {
-					jpg := buf[12:min(len(buf), index)]
-					fmt.Printf("%x", jpg)
+
+			switch buf[0] {
+			case 0x90: //start
+				//clear
+				jpg = nil
+
+				if index := indexSOI(buf); index >= 0 {
+					jpg = append(jpg, buf[index:rlen]...)
+				}
+			case 0x80:
+				if buf[1] == 0x60 { //mid
+					jpg = append(jpg, buf[12:rlen]...)
+				} else { //end
+					if index := indexEOI(buf); index >= 0 {
+						jpg = append(jpg, buf[12:min(rlen, index)]...)
+						if jpg[0] == 0xff && jpg[1] == 0xd8 {
+
+							//send to channel
+							channel <- jpg
+						}
+					}
 				}
 			}
-		default:
 		}
-	}
-
-	//handle udp in goroutine via channel
-	//populate channel
-	//save to cache (3 elements)
-	//send first-in to client
-	//draw in canvas client
+	}(channel)
 
 	return ol
 }
 
 //LiveViewStop stops and ends a liveview
 func (ol *Olympus) LiveViewStop() *Olympus {
-	//4. GET /exec_takemisc.cgi?com=stopliveview HTTP/1.1
-	res, _, errors := ol.client.Get(_domain + _doMisc).
-		Query("com=stopliveview").
-		End()
-	catchHTTPError("", res, errors)
+	if ol.live {
+		logger("Stopping UDP Connection...")
 
+		ol.live = false
+
+		//4. GET /exec_takemisc.cgi?com=stopliveview HTTP/1.1
+		res, _, errors := ol.client.Get(_domain + _doMisc).
+			Query("com=stopliveview").
+			End()
+		catchHTTPError("", res, errors)
+
+		//close udp
+		udpConnection.Close()
+	}
 	return ol
 }
 
 //Utilities
-
 func catch(err error) {
 	if err != nil {
 		log.Fatal(err)
@@ -462,8 +479,17 @@ func catchHTTPError(expectedPath string, res gorequest.Response, err []error) er
 	return nil
 }
 
-func makeImage(filaname, data string) {
-	err := ioutil.WriteFile(filaname, []byte(data), 0666)
+func makeImage(filaname string, data interface{}) {
+	d := []byte{}
+
+	switch data.(type) {
+	case string:
+		d = []byte(data.(string))
+	default:
+		d = data.([]byte)
+	}
+
+	err := ioutil.WriteFile(filaname, d, 0666)
 	catch(err)
 }
 
@@ -474,34 +500,24 @@ func logger(arg ...interface{}) {
 }
 
 func indexSOI(buf []byte) int {
-	//fmt.Printf("%x", buf)
+	offset := 12
 	soi := []byte{0xff, 0xd8}
 
-	//remove first 12
-	buf = buf[12:]
-
-	fmt.Printf("%x", buf)
-
 	//find ff d8
-	if l := bytes.Split(buf, soi); len(l) == 2 {
-		return len(l[0])
+	if l := bytes.Split(buf[offset:], soi); len(l) == 2 {
+		return len(l[0]) + offset
 	}
 
 	return -1
 }
 
 func indexEOI(buf []byte) int {
-	//fmt.Printf("%x", buf)
+	offset := 12
 	eoi := []byte{0xff, 0xd9}
 
-	//remove first 12
-	buf = buf[12:]
-
-	fmt.Printf("%x", buf)
-
 	//find ff d8
-	if l := bytes.Split(buf, eoi); len(l) == 2 {
-		return len(l[0]) + len(eoi)
+	if l := bytes.Split(buf[offset:], eoi); len(l) == 2 {
+		return len(l[0]) + offset + len(eoi)
 	}
 
 	return -1

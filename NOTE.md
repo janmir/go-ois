@@ -10,6 +10,8 @@
     - https://github.com/c0va23/go-mjpeg_simple_server
 - image to byte
     - https://stackoverflow.com/questions/39577318/encoding-an-image-to-jpeg-in-go?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+- image add label
+    - https://stackoverflow.com/questions/38299930/how-to-add-a-simple-text-label-to-an-image-in-go?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
 
 # liveview
 1. GET /switch_cammode.cgi?mode=play HTTP/1.1
